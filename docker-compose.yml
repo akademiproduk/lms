@@ -1,0 +1,61 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: akademi-produk-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-akademi_produk}
+      POSTGRES_USER: ${POSTGRES_USER:-akademi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - akademi_produk_pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./apps/api
+    container_name: akademi-produk-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: 3201
+      DATABASE_URL: postgresql://${POSTGRES_USER:-akademi}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-akademi_produk}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal, edge]
+    ports:
+      - "127.0.0.1:3201:3201"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3201/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: ./apps/web
+    container_name: akademi-produk-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [edge]
+    ports:
+      - "127.0.0.1:3200:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+networks:
+  internal:
+    internal: true
+  edge:
+
+volumes:
+  akademi_produk_pgdata:

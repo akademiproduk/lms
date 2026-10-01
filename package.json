@@ -1,0 +1,12 @@
+{
+  "name": "akademi-produk-lms",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "npm run dev --workspace=@akademi/web",
+    "build": "npm run build --workspace=@akademi/api && npm run build --workspace=@akademi/web",
+    "test": "npm run test --workspace=@akademi/api",
+    "typecheck": "npm run typecheck --workspace=@akademi/api && npm run typecheck --workspace=@akademi/web"
+  }
+}
