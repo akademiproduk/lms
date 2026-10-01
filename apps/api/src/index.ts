@@ -2,6 +2,8 @@ import "dotenv/config";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
+import helmet from "helmet";
+import { rateLimit } from "express-rate-limit";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { initializeDatabase, pool } from "./db.js";
@@ -12,9 +14,13 @@ const port = Number(process.env.PORT || 4000);
 const jwtSecret = process.env.JWT_SECRET || "development-only-change-me";
 if (process.env.NODE_ENV === "production" && jwtSecret === "development-only-change-me") throw new Error("JWT_SECRET is required in production");
 
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: "same-site" } }));
 const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173").split(",").map((origin) => origin.trim());
 app.use(cors({ origin: allowedOrigins, credentials: false }));
 app.use(express.json({ limit: "256kb" }));
+const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: "draft-8", legacyHeaders: false, message: { error: "Too many attempts. Please wait before trying again." } });
 
 type AuthUser = { id: string; email: string; name: string; role: Role };
 type AuthedRequest = Request & { user?: AuthUser };
@@ -32,7 +38,7 @@ function slugify(value: string) { return value.toLowerCase().trim().replace(/[^a
 app.get("/api/health", asyncRoute(async (_req, res) => { await pool.query("SELECT 1"); res.json({ status: "ok" }); }));
 
 const credentials = z.object({ name: z.string().trim().min(2).max(100).optional(), email: z.string().email(), password: z.string() });
-app.post("/api/auth/register", asyncRoute(async (req, res) => {
+app.post("/api/auth/register", authRateLimit, asyncRoute(async (req, res) => {
   const input = credentials.extend({ name: z.string().trim().min(2).max(100) }).parse(req.body);
   const password = validatePassword(input.password); if (!password.valid) return void res.status(400).json({ error: password.message });
   const email = normalizeEmail(input.email); const hash = await bcrypt.hash(input.password, 12);
@@ -41,7 +47,7 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
     res.status(201).json({ token: tokenFor(user), user });
   } catch (error: unknown) { if ((error as { code?: string }).code === "23505") return void res.status(409).json({ error: "Email already registered" }); throw error; }
 }));
-app.post("/api/auth/login", asyncRoute(async (req, res) => {
+app.post("/api/auth/login", authRateLimit, asyncRoute(async (req, res) => {
   const input = credentials.pick({ email: true, password: true }).parse(req.body);
   const { rows: [record] } = await pool.query<AuthUser & { password_hash: string }>("SELECT id,name,email,role,password_hash FROM users WHERE email=$1", [normalizeEmail(input.email)]);
   if (!record || !(await bcrypt.compare(input.password, record.password_hash))) return void res.status(401).json({ error: "Invalid email or password" });
@@ -49,9 +55,10 @@ app.post("/api/auth/login", asyncRoute(async (req, res) => {
 }));
 app.get("/api/auth/me", authenticate, (req: AuthedRequest, res) => res.json({ user: req.user }));
 
-app.get("/api/courses", asyncRoute(async (req, res) => {
-  const staff = req.query.all === "true"; const result = await pool.query(
-    `SELECT c.*, u.name author_name, COUNT(l.id)::int lesson_count FROM courses c LEFT JOIN users u ON u.id=c.author_id LEFT JOIN lessons l ON l.course_id=c.id ${staff ? "" : "WHERE c.published=true"} GROUP BY c.id,u.name ORDER BY c.created_at DESC`);
+app.get("/api/courses", asyncRoute(async (_req, res) => {
+  const result = await pool.query(
+    "SELECT c.*, u.name author_name, COUNT(l.id)::int lesson_count FROM courses c LEFT JOIN users u ON u.id=c.author_id LEFT JOIN lessons l ON l.course_id=c.id WHERE c.published=true GROUP BY c.id,u.name ORDER BY c.created_at DESC",
+  );
   res.json({ courses: result.rows });
 }));
 app.get("/api/courses/:slug", asyncRoute(async (req, res) => {
@@ -78,7 +85,7 @@ app.post("/api/member/lessons/:lessonId/complete", authenticate, asyncRoute(asyn
 app.post("/api/member/quizzes/:quizId/attempt", authenticate, asyncRoute(async (req, res) => { const { answerIndex } = z.object({ answerIndex: z.number().int().min(0) }).parse(req.body); const { rows: [quiz] } = await pool.query<{ correct_index: number }>(`SELECT q.correct_index FROM quizzes q JOIN lessons l ON l.id=q.lesson_id JOIN enrollments e ON e.course_id=l.course_id WHERE q.id=$1 AND e.user_id=$2`, [req.params.quizId, req.user!.id]); if (!quiz) return void res.status(404).json({ error: "Quiz not found or course access denied" }); const correct = quiz.correct_index === answerIndex; await pool.query("INSERT INTO quiz_attempts(user_id,quiz_id,answer_index,is_correct) VALUES($1,$2,$3,$4)", [req.user!.id, req.params.quizId, answerIndex, correct]); res.json({ correct }); }));
 
 const courseInput = z.object({ title: z.string().trim().min(3).max(180), slug: z.string().trim().optional(), excerpt: z.string().max(500).default(""), description: z.string().max(20000).default(""), coverUrl: z.string().url().nullable().optional(), level: z.string().max(50).default("Pemula"), published: z.boolean().default(false) });
-app.get("/api/staff/courses", authenticate, requireRoles("lecturer", "admin"), asyncRoute(async (_req, res) => { const { rows } = await pool.query("SELECT c.*,COUNT(l.id)::int lesson_count FROM courses c LEFT JOIN lessons l ON l.course_id=c.id GROUP BY c.id ORDER BY c.updated_at DESC"); res.json({ courses: rows }); }));
+app.get("/api/staff/courses", authenticate, requireRoles("lecturer", "admin"), asyncRoute(async (req, res) => { const query = req.user!.role === "admin" ? "SELECT c.*,COUNT(l.id)::int lesson_count FROM courses c LEFT JOIN lessons l ON l.course_id=c.id GROUP BY c.id ORDER BY c.updated_at DESC" : "SELECT c.*,COUNT(l.id)::int lesson_count FROM courses c LEFT JOIN lessons l ON l.course_id=c.id WHERE c.author_id=$1 GROUP BY c.id ORDER BY c.updated_at DESC"; const { rows } = await pool.query(query, req.user!.role === "admin" ? [] : [req.user!.id]); res.json({ courses: rows }); }));
 app.post("/api/staff/courses", authenticate, requireRoles("lecturer", "admin"), asyncRoute(async (req, res) => { const input = courseInput.parse(req.body); const slug = input.slug ? slugify(input.slug) : `${slugify(input.title)}-${Date.now().toString(36)}`; const { rows: [course] } = await pool.query("INSERT INTO courses(slug,title,excerpt,description,cover_url,level,published,author_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *", [slug,input.title,input.excerpt,input.description,input.coverUrl || null,input.level,input.published,req.user!.id]); res.status(201).json({ course }); }));
 app.put("/api/staff/courses/:courseId", authenticate, requireRoles("lecturer", "admin"), asyncRoute(async (req, res) => { const input = courseInput.parse(req.body); const { rows: [course] } = await pool.query("UPDATE courses SET slug=$1,title=$2,excerpt=$3,description=$4,cover_url=$5,level=$6,published=$7,updated_at=now() WHERE id=$8 RETURNING *", [input.slug ? slugify(input.slug) : slugify(input.title),input.title,input.excerpt,input.description,input.coverUrl || null,input.level,input.published,req.params.courseId]); if (!course) return void res.status(404).json({ error: "Course not found" }); res.json({ course }); }));
 const lessonInput = z.object({ title: z.string().trim().min(3).max(180), content: z.string().max(50000).default(""), videoUrl: z.string().url().nullable().optional(), position: z.number().int().min(1), quiz: z.object({ question: z.string().min(3), options: z.array(z.string().min(1)).min(2).max(6), correctIndex: z.number().int().min(0) }).optional() });
