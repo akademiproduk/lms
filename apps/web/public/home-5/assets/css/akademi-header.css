@@ -1,0 +1,53 @@
+/* Akademi Produk header overrides: keep primary actions grouped at the right edge. */
+.home5-template .header .navigation {
+  display: flex;
+  align-items: center;
+}
+.home5-template .header .nav-header {
+  flex: 0 0 auto;
+}
+.home5-template .header .nav-menus-wrapper {
+  display: flex !important;
+  align-items: center;
+  flex: 1 1 auto;
+  width: auto !important;
+}
+.home5-template .header .nav-menu:first-child {
+  margin-left: auto;
+}
+.home5-template .header .nav-menu-social.align-to-right {
+  margin-left: 22px !important;
+  margin-right: 0 !important;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.home5-template .header .nav-menu-social > li {
+  float: none !important;
+  margin: 0 !important;
+}
+.home5-template .header .nav-menu-social > li > a {
+  white-space: nowrap;
+}
+.home5-template .ap-brand {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: -1.5px;
+  line-height: 1;
+  text-transform: lowercase;
+}
+.home5-template .ap-brand b { color: #182a26; }
+.home5-template .header-transparent .ap-brand b { color: #fff; }
+.home5-template .ap-brand strong { color: #e94d6d; font-weight: 700; }
+.home5-template .header .become-tutor a { border-radius: 7px; }
+.home5-template .header .join-btn a { border-radius: 7px; }
+@media (max-width: 991px) {
+  .home5-template .header .nav-menus-wrapper { display: block !important; }
+  .home5-template .header .nav-menu:first-child,
+  .home5-template .header .nav-menu-social.align-to-right { margin-left: 0 !important; }
+  .home5-template .header .nav-menu-social { gap: 0; }
+  .home5-template .ap-brand { font-size: 24px; }
+}
