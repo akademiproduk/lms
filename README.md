@@ -20,6 +20,19 @@ npm run build
 cp infra/nginx/akademiproduk.conf /etc/nginx/sites-available/akademiproduk.conf
 ```
 
+### Frontend development
+
+To preview the landing page with hot reload, run the API on port `4000` and start the web workspace:
+
+```bash
+npm install
+npm run dev --workspace=@akademi/api
+# in another terminal
+npm run dev --workspace=@akademi/web
+```
+
+Open `http://localhost:5173`. Requests to `/api` are proxied to `http://127.0.0.1:4000` by Vite. If the API runs elsewhere, set `VITE_API_PROXY_TARGET`, for example `VITE_API_PROXY_TARGET=http://127.0.0.1:3201 npm run dev --workspace=@akademi/web`.
+
 Run with Docker:
 
 ```bash
